@@ -17,12 +17,14 @@ class CreatePermanence extends CreateRecord
     {
         $permanence = $this->record;
 
+
         $samedis = DateFunction::getDateForSpecificDayBetweenDates($permanence->date_debut, $permanence->date_fin, env('PERMANENCE'));
 
         //All services  with de the department of the logged in user
         $services = Service::where('departement_id', auth()->user()->service->departement_id)
             ->select('nom_service', 'id')
             ->get();
+
 
         // returns the IDs of the selected users (users column content)  as json boject 
         //if I remove the where clause, the query returns every single user in Database....no clue as to why tho
@@ -38,26 +40,73 @@ class CreatePermanence extends CreateRecord
             for ($i = $key; $i < count($participantData['users'][$key]['participants']); $i++) {
                 $participantsIds[] = $participantData['users'][$key]['participants'][$i]; // retrieving  Ids of participants from the users Json Column and putting them in an array
             }
+        }
+
+        foreach ($services as $service) {
+
+            $tempUser = User::whereIn('id', $participantsIds)
+                ->where('service_id', $service->id)
+                ->get();
+
+            foreach ($tempUser as $user) {
+                $totalAgentsForPermanence[] = $user->id;
+            }
 
         }
 
-        $usersToPickPerService = [];
+        $serviceAgents = [];
 
-        $jsonToInsertIntoOrder = [];
+        foreach ($services as $key => $service) {
+            $serviceAgents[$key] = array_splice($totalAgentsForPermanence, 0, User::whereIn('id', $participantsIds)->where('service_id', $service->id)
+                ->count());
+        }
 
-        //for each permanence day and for each service,  choose one agent
+        function interleaveArrays()
+        {
+            $arrays = func_get_args();
+            $maxCount = max(array_map('count', $arrays));
+            $result = [];
+
+            for ($i = 0; $i < $maxCount; $i++) {
+                foreach ($arrays as $array) {
+                    if ($i < count($array)) {
+                        $result[] = $array[$i];
+                    } elseif ($i >= count($array) && count($array) < $maxCount) {
+                        $result[] = $array[$i % count($array)];
+                    }
+                }
+            }
+
+            return $result;
+        }
+
+        $finalArray = [];
+
+        $anArray = [];
+        $emptyArray = [];
+
+        foreach ($services as $key => $service) {
+            $anArray = (interleaveArrays($emptyArray, $serviceAgents[$key]));
+        }
+        dd($anArray);
+
+        $finalArray = (interleaveArrays($serviceAgents[0], $serviceAgents[1], ));  // this has to be fixed
+
+        $loopCounter = 0;
         foreach ($samedis as $key => $samedi) {
 
-            foreach ($services as $key => $service) {
-                shuffle($participantsIds);
-                $tempUser = User::whereIn('id', $participantsIds)
-                    ->select('id', 'service_id')
-                    ->where('service_id', $service->id)
-                    ->inRandomOrder()
-                    ->limit(1)
-                    ->first();
+            for ($i=0; $i < count($services); $i++)
+            {
+                if ($loopCounter == count($finalArray)) {
+                    $loopCounter = 0;
+                }
 
-                $usersToPickPerService[] = $tempUser->id;
+                $tempUser = $finalArray[$loopCounter];
+
+                $usersToPickPerService[] = $tempUser;
+
+                $loopCounter++;
+
             }
 
             $jsonToInsertIntoOrder[] = [
@@ -65,25 +114,16 @@ class CreatePermanence extends CreateRecord
                 "participants" => $usersToPickPerService
             ];
 
-            //emptying table after insertion
-            $usersToPickPerService = []; 
+            $usersToPickPerService = [];
+
+            if ($key == count($samedis)) {
+                break;
+            }
         }
 
+  
         $permanence->update([
             'order' => ($jsonToInsertIntoOrder)
         ]);
     }
-
-    // public static function decodeJson($jsonComponent)
-    // {
-    //     foreach ($jsonComponent as $key => $participant) {
-    //         $participantData = json_decode($participant);
-
-    //         for ($i = $key; $i < count($participantData['order'][$key]['participants']); $i++) {
-    //             $participantsIds[] = $participantData['order'][$key]['participants'][$i]; // retrieving  Ids of participants from the users Json Column and putting them in an array
-    //         }
-
-    //     }
-    //     return $participantsIds;
-    // }
 }
